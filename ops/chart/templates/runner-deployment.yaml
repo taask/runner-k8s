@@ -1,0 +1,25 @@
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: runner-k8s
+  labels: &DeploymentLabels
+    metrics/component: runner-k8s
+spec:
+  selector:
+    matchLabels: *DeploymentLabels
+  replicas: {{ .Values.Count }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: *DeploymentLabels
+    spec:
+      containers:
+      - name: runner-k8s
+        image: taask/runner-k8s:{{ .Values.Tag }}
+        command: ["/taask/runner-k8s"]
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: TAASK_JOIN_CODE
+            value: {{ .Values.JoinCode }}
+        # args: []

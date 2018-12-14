@@ -1,0 +1,5 @@
+apiVersion: v1
+name: taask-runner-k8s
+version: 0.1
+description: taask-runner-k8s for development
+appVersion: v0.1
