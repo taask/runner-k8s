@@ -3,13 +3,14 @@ kind: Deployment
 metadata:
   name: runner-k8s
   labels: &DeploymentLabels
-    metrics/component: runner-k8s
+    io.taask/component: runner-k8s
 spec:
   selector:
     matchLabels: *DeploymentLabels
   replicas: {{ .Values.Count }}
   strategy:
     type: Recreate
+  # Pod:
   template:
     metadata:
       labels: *DeploymentLabels

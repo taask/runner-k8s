@@ -28,7 +28,7 @@ var serverPort = flag.String("port", "3687", "port for taask-server")
 
 func main() {
 	flag.Parse()
-	runner, err := taask.NewRunner("com.taask.k8s", []string{}, func(task *model.Task) (interface{}, error) {
+	runner, err := taask.NewRunner("io.taask.k8s", []string{}, func(task *model.Task) (interface{}, error) {
 		var problem addition
 		if err := json.Unmarshal(task.Body, &problem); err != nil {
 			return nil, errors.Wrap(err, "failed to Unmarshal")
