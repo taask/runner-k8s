@@ -16,6 +16,9 @@ import (
 // ErrorNoRunnersRegistered is returned when a task is scheduled to a Kind that has no runners
 var ErrorNoRunnersRegistered = errors.New("no runners registered")
 
+// ErrorCapacityReached is returned when a runner is at capacity
+var ErrorCapacityReached = errors.New("runner capacity reached")
+
 // Manager manages the scheduling of tasks to runners
 type Manager struct {
 	// A map of runner Kinds to pools of runners
@@ -69,21 +72,22 @@ func (m *Manager) Start() {
 		runnerPool, ok := m.runnerPools[nextTask.Kind]
 		if !ok {
 			log.LogWarn(fmt.Sprintf("schedule task %s: no runners of Kind %s registered", nextTask.UUID, nextTask.Kind))
-			m.StartRetryWorker(nextTask)
+			m.startRetryWorker(nextTask)
 			continue
 		}
 
 		runner, err := runnerPool.assignTaskToNextRunner(nextTask)
 		if err != nil {
 			log.LogWarn(errors.Wrap(err, fmt.Sprintf("schedule task %s: no runners of Kind %s available", nextTask.UUID, nextTask.Kind)).Error())
-			m.StartRetryWorker(nextTask)
+			m.startRetryWorker(nextTask)
 			continue
 		}
 
-		listener := m.updater.GetListener(nextTask.UUID)
-		go runnerPool.listenForCompletedTask(listener)
+		nextTask.Meta.ResultToken = model.NewResultToken()
+		m.updater.UpdateTask(&model.TaskUpdate{UUID: nextTask.UUID, Status: model.TaskStatusQueued, RunnerUUID: runner.UUID, ResultToken: nextTask.Meta.ResultToken})
 
-		go m.updater.UpdateTask(&model.TaskUpdate{UUID: nextTask.UUID, Status: model.TaskStatusQueued, RunnerUUID: runner.UUID})
+		listener := m.updater.GetListener(nextTask.UUID)
+		go m.startRunMonitor(nextTask, runnerPool, listener)
 
 		runner.TaskChannel <- nextTask
 	}

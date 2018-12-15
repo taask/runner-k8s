@@ -110,15 +110,15 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:fc2d85a2afc152524528b69a6e21147b517f3ab19dd49c4ea1df04e876e01e99"
+  digest = "1:9115270c3c73a822305450da498e318e63b2a68c3648a400f4dceeb570d0dac9"
   name = "github.com/taask/runner-golang"
   packages = ["."]
   pruneopts = "UT"
-  revision = "646a63227f5991dc942866d2e13ae9b84bf775f7"
+  revision = "3bc83b7630e0ccaf340a4f5d1700426564527b9a"
 
 [[projects]]
   branch = "master"
-  digest = "1:b3954cfeb4eb2998e734dacff6b5d6279076ed31a93769a41a05ec8a450265c2"
+  digest = "1:a0cb360269055330351dda94830adbaa47f1c4e0b3d7aa55c2ab8c8c5f608a07"
   name = "github.com/taask/taask-server"
   packages = [
     "auth",
@@ -132,7 +132,7 @@
     "update",
   ]
   pruneopts = "UT"
-  revision = "708c6fbf49ffc62d26c99ffb9a45b1fe1daf51be"
+  revision = "286bfb798f487b0a6cf397bf32875546664ea75b"
 
 [[projects]]
   branch = "master"
