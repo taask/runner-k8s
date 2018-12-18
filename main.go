@@ -11,7 +11,6 @@ import (
 	log "github.com/cohix/simplog"
 	"github.com/pkg/errors"
 	"github.com/taask/runner-golang"
-	"github.com/taask/taask-server/model"
 )
 
 type addition struct {
@@ -29,9 +28,9 @@ var serverPort = flag.String("port", "3687", "port for taask-server")
 func main() {
 	flag.Parse()
 
-	runner, err := taask.NewRunner("io.taask.k8s", []string{}, func(task *model.Task) (interface{}, error) {
+	runner, err := taask.NewRunner("io.taask.k8s", []string{}, func(task []byte) (interface{}, error) {
 		var problem addition
-		if err := json.Unmarshal(task.Body, &problem); err != nil {
+		if err := json.Unmarshal(task, &problem); err != nil {
 			return nil, errors.Wrap(err, "failed to Unmarshal")
 		}
 
