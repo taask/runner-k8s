@@ -16,7 +16,7 @@ import (
 )
 
 // TaskHandler represents a handler that can handle a task
-type TaskHandler func(*model.Task) (interface{}, error)
+type TaskHandler func([]byte) (interface{}, error)
 
 // Runner describes a runner
 type Runner struct {
@@ -79,7 +79,7 @@ func (r *Runner) auth(joinCode string) ([]byte, error) {
 		return nil, errors.Wrap(err, "failed to Sign")
 	}
 
-	authReq := &model.AuthRunnerRequest{
+	authReq := &service.AuthRunnerRequest{
 		PubKey:            r.keypair.SerializablePubKey(),
 		JoinCodeSignature: joinSig,
 	}
@@ -113,7 +113,7 @@ func (r *Runner) run(challenge []byte) error {
 		return errors.Wrap(err, "failed to Sign")
 	}
 
-	req := &model.RegisterRunnerRequest{
+	req := &service.RegisterRunnerRequest{
 		UUID:               r.runner.UUID,
 		Kind:               r.runner.Kind,
 		Tags:               r.runner.Tags,
@@ -149,20 +149,43 @@ func (r *Runner) run(challenge []byte) error {
 		log.LogInfo(fmt.Sprintf("received task with uuid %s", task.UUID))
 
 		go func(handler TaskHandler, task *model.Task) {
-			if err := r.sendUpdate(task, nil, nil); err != nil {
+			// set task status to active
+			// sendUpdate calls task.Update, so have to do this synchronously
+			if err := r.sendUpdate(task, nil, nil, nil); err != nil {
 				log.LogError(errors.Wrap(err, "failed to sendUpdate"))
+				return
 			}
 
-			result, err := handler(task)
+			taskKeyJSON, err := r.keypair.Decrypt(task.Meta.RunnerEncTaskKey)
 			if err != nil {
-				if err := r.sendUpdate(task, nil, err); err != nil {
+				log.LogError(errors.Wrap(err, "failed to Decrypt task key"))
+				return
+			}
+
+			taskKey, err := simplcrypto.SymKeyFromJSON(taskKeyJSON)
+			if err != nil {
+				log.LogError(errors.Wrap(err, "failed to SymKeyFromJSON"))
+				return
+			}
+
+			taskBodyJSON, err := taskKey.Decrypt(task.EncBody)
+			if err != nil {
+				log.LogError(errors.Wrap(err, "failed to Decrypt task body"))
+				return
+			}
+
+			result, err := handler(taskBodyJSON)
+			if err != nil {
+				// sendUpdate calls task.Update
+				if err := r.sendUpdate(task, taskKey, nil, err); err != nil {
 					log.LogError(errors.Wrap(err, "failed to sendUpdate"))
 				}
 
 				return
 			}
 
-			if err := r.sendUpdate(task, result, nil); err != nil {
+			// sendUpdate calls task.Update... just making sure you know.
+			if err := r.sendUpdate(task, taskKey, result, nil); err != nil {
 				log.LogError(errors.Wrap(err, "failed to sendUpdate"))
 			}
 		}(r.handler, task)
@@ -171,36 +194,19 @@ func (r *Runner) run(challenge []byte) error {
 	return nil
 }
 
-func (r *Runner) sendUpdate(task *model.Task, result interface{}, taskErr error) error {
-	update := &model.TaskUpdate{
-		UUID:        task.UUID,
-		ResultToken: task.Meta.ResultToken,
-	}
+func (r *Runner) sendUpdate(task *model.Task, taskKey *simplcrypto.SymKey, result interface{}, taskErr error) error {
+	update := model.TaskUpdate{}
 
 	if result == nil && taskErr == nil {
 		update.Status = model.TaskStatusRunning
 	} else {
-		resultSymKey, err := simplcrypto.GenerateSymKey()
-		if err != nil {
-			return errors.Wrap(err, "failed to GenerateSymKey")
-		}
-
-		resultPubKey, err := simplcrypto.KeyPairFromSerializedPubKey(task.Meta.ResultPubKey)
-		if err != nil {
-			return errors.Wrap(err, "failed to KeyPairFromSerializedPubKey")
-		}
-
-		encResultKey, err := resultPubKey.Encrypt(resultSymKey.JSON())
-		if err != nil {
-			return errors.Wrap(err, "failed to Encrypt resultSymKey")
-		}
-
 		var encResult *simplcrypto.Message
 
 		if result == nil && taskErr != nil {
 			update.Status = model.TaskStatusFailed
 
-			encResult, err = resultSymKey.Encrypt([]byte(taskErr.Error()))
+			var err error
+			encResult, err = taskKey.Encrypt([]byte(taskErr.Error()))
 			if err != nil {
 				return errors.Wrap(err, "failed to Encrypt error result")
 			}
@@ -212,17 +218,21 @@ func (r *Runner) sendUpdate(task *model.Task, result interface{}, taskErr error)
 				return errors.Wrap(err, "failed to Marshal result")
 			}
 
-			encResult, err = resultSymKey.Encrypt(resultJSON)
+			encResult, err = taskKey.Encrypt(resultJSON)
 			if err != nil {
 				return errors.Wrap(err, "failed to Encrypt result")
 			}
 		}
 
 		update.EncResult = encResult
-		update.EncResultSymKey = encResultKey
 	}
 
-	if _, err := r.client.UpdateTask(context.Background(), update); err != nil {
+	realUpdate, err := task.Update(update)
+	if err != nil {
+		return errors.Wrap(err, "failed to task.Update")
+	}
+
+	if _, err := r.client.UpdateTask(context.Background(), &realUpdate); err != nil {
 		return errors.Wrap(err, "failed to UpdateTask")
 	}
 

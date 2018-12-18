@@ -1,52 +1,83 @@
 package schedule
 
 import (
+	"fmt"
 	"time"
 
+	log "github.com/cohix/simplog"
+	"github.com/pkg/errors"
 	"github.com/taask/taask-server/model"
 )
 
-// RetryTaskWorker manager the backoff retries of a delenquient task
-type RetryTaskWorker struct {
+// retryTaskWorker manager the backoff retries of a delenquient task
+type retryTaskWorker struct {
 	task    *model.Task
 	nowChan chan bool
 }
 
-func (sm *Manager) startRetryWorker(task *model.Task) {
-	if task.Meta.RetrySeconds == 0 {
-		task.Meta.RetrySeconds = 1
-	} else if task.Meta.RetrySeconds < 16 {
-		task.Meta.RetrySeconds *= 2
+func (sm *Manager) startRetryWorker(taskUUID string) {
+	listener := sm.updater.GetListener(taskUUID)
+	task := <-listener // just get the first update, which will be the task's state when the listener was created
+
+	retrySeconds := task.Meta.RetrySeconds
+
+	if retrySeconds == 0 {
+		retrySeconds = 1
+	} else if retrySeconds < 16 {
+		retrySeconds *= 2
 	}
 
-	worker := &RetryTaskWorker{
-		task:    task,
+	worker := &retryTaskWorker{
+		task:    &task,
 		nowChan: make(chan bool),
 	}
 
 	sm.retryLock.Lock()
-	sm.retrying[task.UUID] = worker
+	sm.retrying[taskUUID] = worker
 	sm.retryLock.Unlock()
 
-	sm.updater.UpdateTask(&model.TaskUpdate{UUID: task.UUID, Status: model.TaskStatusRetrying, RetrySeconds: task.Meta.RetrySeconds})
+	update, err := task.Update(model.TaskUpdate{Status: model.TaskStatusRetrying, RetrySeconds: retrySeconds, RunnerUUID: ""})
+	if err != nil {
+		log.LogWarn(errors.Wrap(err, "startRetryWorker failed to task.Update").Error())
+	}
+
+	sm.updater.UpdateTask(update)
 
 	go func() {
-		select {
-		case <-time.After(time.Second * time.Duration(worker.task.Meta.RetrySeconds)):
-			// run the task
-		case <-worker.nowChan:
-			// ignore the timer and run the task
+		for {
+			select {
+			case task = <-listener:
+				if task.IsRunning() || task.IsFinished() {
+					log.LogInfo(fmt.Sprintf("retry monitor for task %s detected task with staus %s, canceling", task.UUID, task.Status))
+
+					sm.retryLock.Lock()
+					delete(sm.retrying, taskUUID)
+					sm.retryLock.Unlock()
+
+					break
+				}
+
+				continue
+			case <-time.After(time.Second * time.Duration(retrySeconds)):
+				// run the task
+			case <-worker.nowChan:
+				// ignore the timer and run the task
+			}
+
+			log.LogInfo(fmt.Sprintf("task %s retrying after %d seconds", taskUUID, retrySeconds))
+
+			sm.ScheduleTask(&task)
+
+			sm.retryLock.Lock()
+			delete(sm.retrying, taskUUID)
+			sm.retryLock.Unlock()
+
+			break
 		}
-
-		sm.requeueTask(task)
-
-		sm.retryLock.Lock()
-		delete(sm.retrying, task.UUID)
-		sm.retryLock.Unlock()
 	}()
 }
 
-func (rw *RetryTaskWorker) retryNow() {
+func (rw *retryTaskWorker) retryNow() {
 	go func() {
 		rw.nowChan <- true
 	}()
